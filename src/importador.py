@@ -1,6 +1,6 @@
 """
 Módulo para importação de planilhas Excel para o banco de dados
-VERSÃO LIMPA - Sem mensagens de debug
+VERSÃO COM SUPORTE A ATUALIZAÇÃO
 """
 
 import streamlit as st
@@ -257,6 +257,41 @@ def extrair_mes_automatico(arquivo) -> Optional[str]:
 
 
 # ============================================================
+# FUNÇÃO PARA LIMPAR DADOS DO PERÍODO
+# ============================================================
+
+def limpar_dados_periodo(periodo_id: str) -> bool:
+    """
+    Remove todos os dados de um período (mantém o período, limpa os dados)
+    Usado para atualização de dados
+    """
+    try:
+        from src.database import get_db
+        db = get_db()
+        
+        # Ordem de deleção (respeitar foreign keys)
+        tabelas = [
+            'disciplinas',
+            'ocupacao', 
+            'nao_regencia',
+            'faltas',
+            'turmas',
+            'instrutores',
+            'ambientes'
+        ]
+        
+        for tabela in tabelas:
+            try:
+                db.table(tabela).delete().eq('periodo_id', periodo_id).execute()
+            except Exception:
+                pass  # Ignora se tabela não existir ou estiver vazia
+        
+        return True
+    except Exception:
+        return False
+
+
+# ============================================================
 # FUNÇÕES DE IMPORTAÇÃO
 # ============================================================
 
@@ -265,7 +300,7 @@ def importar_turmas(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[str, 
     try:
         df = pd.read_excel(xls, sheet_name="TURMAS")
         df = limpar_dataframe(df)
-    except Exception as e:
+    except Exception:
         return 0, {}
     
     mapeamento = {}
@@ -583,11 +618,22 @@ def importar_faltas(xls: pd.ExcelFile, periodo_id: str,
 
 
 # ============================================================
-# FUNÇÃO PRINCIPAL DE IMPORTAÇÃO
+# FUNÇÃO PRINCIPAL DE IMPORTAÇÃO (COM SUPORTE A ATUALIZAÇÃO)
 # ============================================================
 
-def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, str, Dict]:
-    """Importa uma planilha completa para o banco de dados"""
+def importar_planilha_completa(arquivo, usuario: str = "admin", 
+                                forcar_atualizacao: bool = False) -> Tuple[bool, str, Dict]:
+    """
+    Importa uma planilha completa para o banco de dados
+    
+    Args:
+        arquivo: Arquivo Excel carregado
+        usuario: Nome do usuário que está importando
+        forcar_atualizacao: Se True, atualiza dados de período existente
+        
+    Returns:
+        Tupla (sucesso, mensagem, estatísticas)
+    """
     estatisticas = {
         'turmas': 0,
         'instrutores': 0,
@@ -595,7 +641,8 @@ def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, s
         'disciplinas': 0,
         'ocupacao': 0,
         'nao_regencia': 0,
-        'faltas': 0
+        'faltas': 0,
+        'modo': 'novo'  # 'novo' ou 'atualização'
     }
     
     try:
@@ -615,15 +662,27 @@ def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, s
         from src.database import obter_periodo_por_referencia, criar_periodo, limpar_todos_caches
         
         periodo_existente = obter_periodo_por_referencia(mes_ref)
+        
         if periodo_existente:
-            return False, f"O período '{mes_ref}' já existe. Delete-o primeiro.", estatisticas
-        
-        # 4. Criar período
-        periodo = criar_periodo(mes_ref, usuario)
-        if not periodo:
-            return False, "Erro ao criar período no banco de dados.", estatisticas
-        
-        periodo_id = periodo['id']
+            if not forcar_atualizacao:
+                # Retornar indicando que precisa de confirmação
+                return False, f"PERIODO_EXISTENTE:{mes_ref}", estatisticas
+            
+            # Modo atualização: limpar dados antigos
+            periodo_id = periodo_existente['id']
+            estatisticas['modo'] = 'atualização'
+            
+            # Limpar dados antigos do período
+            if not limpar_dados_periodo(periodo_id):
+                return False, "Erro ao limpar dados antigos do período.", estatisticas
+        else:
+            # 4. Criar novo período
+            periodo = criar_periodo(mes_ref, usuario)
+            if not periodo:
+                return False, "Erro ao criar período no banco de dados.", estatisticas
+            
+            periodo_id = periodo['id']
+            estatisticas['modo'] = 'novo'
         
         # 5. Abrir Excel
         arquivo.seek(0)
@@ -650,7 +709,38 @@ def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, s
         # 7. Limpar caches
         limpar_todos_caches()
         
-        return True, f"✅ Período '{mes_ref}' importado com sucesso!", estatisticas
+        # Mensagem baseada no modo
+        if estatisticas['modo'] == 'atualização':
+            return True, f"✅ Período '{mes_ref}' ATUALIZADO com sucesso!", estatisticas
+        else:
+            return True, f"✅ Período '{mes_ref}' CRIADO com sucesso!", estatisticas
     
     except Exception as e:
         return False, f"Erro durante importação: {str(e)}", estatisticas
+
+
+def verificar_periodo_planilha(arquivo) -> Tuple[bool, str, bool]:
+    """
+    Verifica se o período da planilha já existe
+    
+    Returns:
+        Tupla (sucesso, mes_referencia, existe)
+    """
+    try:
+        arquivo.seek(0)
+        valido, msg = validar_planilha(arquivo)
+        if not valido:
+            return False, msg, False
+        
+        arquivo.seek(0)
+        mes_ref = extrair_mes_automatico(arquivo)
+        if not mes_ref:
+            return False, "Não foi possível detectar o mês.", False
+        
+        from src.database import obter_periodo_por_referencia
+        periodo_existente = obter_periodo_por_referencia(mes_ref)
+        
+        return True, mes_ref, periodo_existente is not None
+    
+    except Exception as e:
+        return False, str(e), False

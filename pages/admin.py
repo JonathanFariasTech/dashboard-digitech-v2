@@ -14,25 +14,13 @@ from src.database import (
     get_db
 )
 from src.auth import inicializar_sessao, requer_autenticacao
-from src.importador import importar_planilha_completa
+from src.importador import importar_planilha_completa, verificar_periodo_planilha
 from src.utils import nome_mes_extenso, formatar_numero
 
 
 # ============================================================
 # CONFIGURAÇÃO
 # ============================================================
-
-def safe_number(value, default=0):
-    """Converte valor para número de forma segura"""
-    if value is None:
-        return default
-    try:
-        import pandas as pd
-        if isinstance(value, (int, float)) and pd.isna(value):
-            return default
-        return float(value)
-    except (ValueError, TypeError):
-        return default
 
 st.set_page_config(page_title="Administração", page_icon="⚙️", layout="wide")
 
@@ -46,173 +34,194 @@ inicializar_sessao()
 if not requer_autenticacao('ADMIN'):
     st.stop()
 
-st.sidebar.success("✅ Login Admin Confirmado")
-
-st.sidebar.divider()
-
-if st.sidebar.button("🚪 Sair", use_container_width=True):
-    from src.auth import fazer_logout
-    fazer_logout()
-    st.rerun()
-
 
 # ============================================================
 # TÍTULO
 # ============================================================
 
 st.title("⚙️ Painel Administrativo")
-st.markdown("""
-## Importação de Dados e Configurações do Sistema
-
-Utilize esta área para:
-- 📥 **Adicionar novos períodos** via upload de planilha
-- 🎯 **Definir metas** de Hora-Aluno manualmente  
-- 🗑️ **Remover períodos** do banco de dados
-""")
+st.markdown("Importação de dados e configurações do sistema")
 
 st.divider()
 
 
 # ============================================================
-# IMPORTAÇÃO DE NOVO PERÍODO
+# IMPORTAÇÃO DE PLANILHA (COM ATUALIZAÇÃO INTELIGENTE)
 # ============================================================
 
-st.markdown("### 📤 Adicionar Novo Período")
-st.caption("Faça upload da planilha mensal (.xlsx) com todas as abas obrigatórias")
+st.markdown("### 📤 Importar / Atualizar Dados")
 
-with st.expander("ℹ️ Requisitos da Planilha", expanded=False):
-    st.markdown("""
-    **Abas Obrigatórias:**
-    - ✅ TURMAS
-    - ✅ OCUPAÇÃO  
-    - ✅ NÃO_REGÊNCIA
-    - ✅ INSTRUTORES
-    - ✅ DISCIPLINAS
-    - ✅ AMBIENTES
-    - ✅ FALTAS
-    - ✅ PARÂMETROS
-    
-    **Colunas Mínimas Necessárias:**
-    - TURMAS: ID_TURMA, NOME_TURMA, TURNO, VAGAS_OCUPADAS
-    - OCUPAÇÃO: DATA, AMBIENTE, PERCENTUAL_OCUPACAO
-    - DISCIPLINAS: ID_TURMA, NOME_DISCIPLINA, CARGA_HORARIA, STATUS
-    """)
+st.info("""
+**💡 Como funciona:**
+- Se o período **não existe**: cria um novo período com os dados
+- Se o período **já existe**: atualiza os dados (substitui pelos novos)
+- O sistema detecta automaticamente o mês baseado na aba OCUPAÇÃO
+""")
+
+# Estado para controle do upload
+if 'arquivo_pendente' not in st.session_state:
+    st.session_state['arquivo_pendente'] = None
+if 'mes_detectado' not in st.session_state:
+    st.session_state['mes_detectado'] = None
+if 'periodo_existe' not in st.session_state:
+    st.session_state['periodo_existe'] = False
 
 # Upload do arquivo
 arquivo_carregado = st.file_uploader(
-    "Upload de Planilha Excel (.xlsx)",
+    "Selecione a planilha Excel (.xlsx)",
     type=["xlsx"],
-    help="Selecione o arquivo mensal para importar"
+    help="A planilha deve conter as abas: TURMAS, OCUPAÇÃO, NÃO_REGÊNCIA, INSTRUTORES, DISCIPLINAS, AMBIENTES, FALTAS, PARÂMETROS",
+    key="uploader_principal"
 )
 
 if arquivo_carregado:
-    with st.spinner("🔍 Validando planilha..."):
-        try:
-            # Testar leitura rápida para verificação
-            xls = pd.ExcelFile(arquivo_carregado)
-            abas = xls.sheet_names
+    # Verificar o arquivo
+    with st.spinner("🔍 Analisando planilha..."):
+        sucesso, mes_ref, existe = verificar_periodo_planilha(arquivo_carregado)
+    
+    if not sucesso:
+        st.error(f"❌ {mes_ref}")
+    else:
+        # Mostrar informações detectadas
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                        padding: 1.5rem; border-radius: 12px; text-align: center;">
+                <h3 style="color: white; margin: 0;">📅 {nome_mes_extenso(mes_ref)}</h3>
+                <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0;">
+                    Período detectado na planilha
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            if existe:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                            padding: 1.5rem; border-radius: 12px; text-align: center;">
+                    <h3 style="color: white; margin: 0;">🔄 ATUALIZAÇÃO</h3>
+                    <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0;">
+                        Período já existe - dados serão substituídos
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); 
+                            padding: 1.5rem; border-radius: 12px; text-align: center;">
+                    <h3 style="color: white; margin: 0;">✨ NOVO PERÍODO</h3>
+                    <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0;">
+                        Será criado um novo período
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("")
+        
+        # Botões de ação
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            if existe:
+                btn_texto = "🔄 Atualizar Dados do Período"
+                btn_tipo = "primary"
+            else:
+                btn_texto = "✨ Criar Novo Período"
+                btn_tipo = "primary"
             
-            st.success(f"✅ Planilha válida! Abas encontradas: {len(abas)}")
-            for aba in abas:
-                st.markdown(f"• **{aba}**: OK")
-        except Exception as e:
-            st.error(f"❌ Erro ao ler arquivo: {str(e)}")
-            st.stop()
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        btn_importar = st.button("🚀 Importar para o Banco de Dados", use_container_width=True)
-    
-    with col2:
-        btn_cancelar = st.button("❌ Cancelar", use_container_width=True)
-    
-    if btn_importar:
-        with st.status("⏳ Importando dados...", expanded=True) as status:
-            try:
-                status.write("📥 Processando arquivo...")
-                
-                sucesso, mensagem, estatisticas = importar_planilha_completa(
-                    arquivo_carregado, 
-                    usuario="admin"
-                )
-                
-                if sucesso:
-                    status.update(
-                        label="✅ Importação concluída!",
-                        state="complete",
-                        expanded=False
+            btn_importar = st.button(btn_texto, type=btn_tipo, use_container_width=True)
+        
+        with col2:
+            st.button("❌ Cancelar", use_container_width=True, on_click=lambda: st.cache_data.clear())
+        
+        # Processar importação
+        if btn_importar:
+            with st.status("⏳ Processando importação...", expanded=True) as status:
+                try:
+                    status.write("📥 Importando dados para o banco...")
+                    
+                    # Forçar atualização se período já existe
+                    sucesso, mensagem, estatisticas = importar_planilha_completa(
+                        arquivo_carregado, 
+                        usuario="admin",
+                        forcar_atualizacao=existe  # True se período existe
                     )
                     
-                    st.success(mensagem)
-                    
-                    # Mostrar estatísticas
-                    col_stats1, col_stats2, col_stats3 = st.columns(3)
-                    col_stats1.metric("📚 Turmas", estatisticas.get('turmas', 0))
-                    col_stats2.metric("👨‍🏫 Instrutores", estatisticas.get('instrutores', 0))
-                    col_stats3.metric("📖 Disciplinas", estatisticas.get('disciplinas', 0))
-                    
-                    col_stats4, col_stats5, col_stats6 = st.columns(3)
-                    col_stats4.metric("🏢 Ocupações", estatisticas.get('ocupacao', 0))
-                    col_stats5.metric("⏰ Não Regência", estatisticas.get('nao_regencia', 0))
-                    col_stats6.metric("⚠️ Faltas", estatisticas.get('faltas', 0))
-                    
-                    st.info("✨ Limpeza de cache automática realizada.")
-                    
-                else:
-                    status.update(label="❌ Erro na importação", state="error")
-                    st.error(mensagem)
-                    
-                    if estatisticas:
-                        st.info("Parciais antes do erro:")
-                        st.json(estatisticas)
+                    if sucesso:
+                        status.update(
+                            label="✅ Importação concluída!",
+                            state="complete",
+                            expanded=True
+                        )
+                        
+                        # Mostrar modo
+                        if estatisticas.get('modo') == 'atualização':
+                            st.success(f"🔄 **Dados de {mes_ref} atualizados com sucesso!**")
+                        else:
+                            st.success(f"✨ **Período {mes_ref} criado com sucesso!**")
+                        
+                        # Mostrar estatísticas
+                        st.markdown("#### 📊 Resumo da Importação")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("📚 Turmas", estatisticas.get('turmas', 0))
+                        col2.metric("👨‍🏫 Instrutores", estatisticas.get('instrutores', 0))
+                        col3.metric("🏢 Ambientes", estatisticas.get('ambientes', 0))
+                        col4.metric("📖 Disciplinas", estatisticas.get('disciplinas', 0))
+                        
+                        col5, col6, col7, col8 = st.columns(4)
+                        col5.metric("📅 Ocupação", estatisticas.get('ocupacao', 0))
+                        col6.metric("⏰ Não Regência", estatisticas.get('nao_regencia', 0))
+                        col7.metric("⚠️ Faltas", estatisticas.get('faltas', 0))
+                        col8.metric("🎯 Modo", "Atualização" if estatisticas.get('modo') == 'atualização' else "Novo")
+                        
+                        st.balloons()
+                        
+                    else:
+                        status.update(label="❌ Erro", state="error")
+                        st.error(mensagem)
                 
-            except Exception as e:
-                status.update(label="❌ Falha crítica", state="error")
-                st.error(f"Erro inesperado: {str(e)}")
-                
-                import traceback
-                st.code(traceback.format_exc(), language="text")
+                except Exception as e:
+                    status.update(label="❌ Falha", state="error")
+                    st.error(f"Erro: {str(e)}")
+
+st.divider()
 
 
 # ============================================================
 # GESTÃO DE METAS
 # ============================================================
 
-st.divider()
 st.markdown("### 🎯 Gestão de Metas de Hora-Aluno")
 
-# Carregar períodos com tratamento de erro
 periodos = listar_periodos(apenas_ativos=False)
 
-# ✅ CORREÇÃO: Verificar se DataFrame está vazio ou não tem colunas
 if periodos.empty or 'mes_referencia' not in periodos.columns:
-    st.info("📭 Nenhum período cadastrado ainda. Importe uma planilha primeiro usando o formulário acima.")
+    st.info("📭 Nenhum período cadastrado. Importe uma planilha primeiro.")
 else:
-    # ✅ CORREÇÃO: Agora só acessa se tiver dados
     lista_periodos = periodos['mes_referencia'].tolist()
     
-    periodo_sel = st.selectbox(
-        "Selecionar Período:",
-        lista_periodos,
-        index=0
-    )
+    col1, col2 = st.columns([1, 2])
     
-    periodo_info = obter_periodo_por_referencia(periodo_sel)
+    with col1:
+        periodo_sel = st.selectbox(
+            "Selecionar Período:",
+            lista_periodos,
+            index=0,
+            key="periodo_meta"
+        )
     
-    if periodo_info:
-        meta_atual = periodo_info.get('meta_hora_aluno', 0)
-        tipo_meta = "Manual" if meta_atual > 0 else "Automática"
+    with col2:
+        periodo_info = obter_periodo_por_referencia(periodo_sel)
         
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.markdown("**Meta Atual**")
-            st.metric(label=f"Tipo: {tipo_meta}", value=formatar_numero(meta_atual))
-        
-        with col2:
+        if periodo_info:
+            meta_atual = periodo_info.get('meta_hora_aluno', 0) or 0
+            tipo_meta = "Manual" if meta_atual > 0 else "Automática"
+            
+            st.markdown(f"**Meta atual:** {formatar_numero(meta_atual)} ({tipo_meta})")
+            
             nova_meta = st.number_input(
                 "Definir Nova Meta (0 = Automático):",
                 min_value=0,
@@ -223,156 +232,118 @@ else:
             
             if st.button("💾 Salvar Meta", use_container_width=True):
                 if nova_meta != meta_atual:
-                    # Atualizar no banco
-                    sucesso = atualizar_meta_periodo(
-                        periodo_info['id'],
-                        nova_meta
-                    )
+                    sucesso = atualizar_meta_periodo(periodo_info['id'], nova_meta)
                     
                     if sucesso:
-                        st.success("Meta atualizada com sucesso! ✨")
-                        limpar_todos_caches()
+                        st.success("✅ Meta atualizada!")
                         st.rerun()
                     else:
                         st.error("Erro ao salvar meta.")
                 else:
-                    st.info("Nenhuma alteração detectada.")
+                    st.info("Nenhuma alteração.")
+
+st.divider()
 
 
 # ============================================================
 # EXCLUSÃO DE PERÍODO
 # ============================================================
 
-st.divider()
 st.markdown("### 🗑️ Remover Período")
 
-# ✅ CORREÇÃO: Verificar novamente se há períodos
 if periodos.empty or 'mes_referencia' not in periodos.columns:
     st.info("Não há períodos para remover.")
 else:
-    st.warning("⚠️ Esta ação é irreversível! Todos os dados do período serão excluídos permanentemente.")
+    st.warning("⚠️ **Atenção:** Esta ação é irreversível! Todos os dados do período serão excluídos permanentemente.")
     
     lista_periodos_remover = periodos['mes_referencia'].tolist()
     
-    with st.form("form_remover_periodo", clear_on_submit=True):
+    with st.expander("🗑️ Clique para abrir painel de exclusão", expanded=False):
         periodo_remover = st.selectbox(
-            "Selecione o período para excluir:",
-            ["-- Selecione --"] + lista_periodos_remover
+            "Selecione o período:",
+            ["-- Selecione --"] + lista_periodos_remover,
+            key="periodo_remover"
         )
         
-        confirmacao = st.text_input(
-            "Digite o código do período para confirmar:",
-            placeholder="Ex: 03 - Mar 2025"
-        )
-        
-        btn_remover = st.form_submit_button("🚨 EXCLUIR DEFINITIVAMENTE", type="primary", use_container_width=True)
-        
-        if btn_remover:
-            if periodo_remover == "-- Selecione --":
-                st.warning("Por favor, selecione um período.")
-            elif confirmacao != periodo_remover:
-                st.error("❌ Código de confirmação incorreto.")
-            else:
-                periodo_para_remover = obter_periodo_por_referencia(confirmacao)
-                
-                if periodo_para_remover:
-                    try:
-                        db = get_db()
-                        
-                        # Deletar registros relacionados primeiro (CASCADE deveria fazer isso, mas por segurança)
-                        tabelas_relacionadas = [
-                            'disciplinas', 'turmas', 'instrutores', 'ambientes',
-                            'ocupacao', 'nao_regencia', 'faltas'
-                        ]
-                        
-                        for tabela in tabelas_relacionadas:
-                            try:
-                                db.table(tabela)\
-                                    .delete()\
-                                    .eq('periodo_id', periodo_para_remover['id'])\
-                                    .execute()
-                            except Exception:
-                                pass  # Ignora se tabela não existir
-                        
-                        # Agora deletar o próprio período
-                        response = db.table('periodos')\
-                            .delete()\
-                            .eq('id', periodo_para_remover['id'])\
-                            .execute()
-                        
-                        limpar_todos_caches()
-                        st.success(f"✅ Período '{confirmacao}' removido com sucesso!")
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Erro ao remover período: {str(e)}")
-                else:
-                    st.error("Período não encontrado.")
-
-
-# ============================================================
-# AUDITORIA DO SISTEMA
-# ============================================================
-
-st.divider()
-st.markdown("### 🔍 Logs de Auditoria")
-st.caption("Registro de alterações realizadas no sistema")
-
-from src.database import listar_auditoria
-
-limite_logs = st.slider("Limite de registros:", 50, 500, 100, step=50)
-
-# Lista de tabelas para filtro
-tabelas_disponiveis = ['turmas', 'disciplinas', 'instrutores', 'ambientes', 'nao_regencia', 'faltas', 'periodos']
-filtro_tabela = st.multiselect("Filtrar por tabela:", tabelas_disponiveis)
-
-df_logs = listar_auditoria(limite=limite_logs)
-
-# ✅ CORREÇÃO: Verificar se há logs e se a coluna existe
-if df_logs.empty:
-    st.info("📭 Nenhum registro de auditoria encontrado.")
-else:
-    # Aplicar filtro se selecionado
-    if filtro_tabela and 'tabela' in df_logs.columns:
-        df_logs = df_logs[df_logs['tabela'].isin(filtro_tabela)]
-    
-    if df_logs.empty:
-        st.info("Nenhum registro encontrado com os filtros aplicados.")
-    else:
-        # Preparar para exibição
-        df_display = df_logs.head(200).copy()
-        
-        # Formatamento de data
-        if 'created_at' in df_display.columns:
-            df_display['created_at'] = pd.to_datetime(df_display['created_at'], errors='coerce')
-            df_display['timestamp'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M:%S')
-        
-        # Selecionar colunas existentes
-        cols_desejadas = ['timestamp', 'tabela', 'operacao', 'usuario']
-        cols_existentes = [col for col in cols_desejadas if col in df_display.columns]
-        
-        if cols_existentes:
-            df_final = df_display[cols_existentes].copy()
-            
-            # Renomear colunas
-            rename_map = {
-                'timestamp': 'Data/Hora',
-                'tabela': 'Tabela',
-                'operacao': 'Operação',
-                'usuario': 'Usuário'
-            }
-            df_final = df_final.rename(columns={k: v for k, v in rename_map.items() if k in df_final.columns})
-            
-            st.dataframe(
-                df_final,
-                use_container_width=True,
-                hide_index=True
+        if periodo_remover != "-- Selecione --":
+            confirmacao = st.text_input(
+                f"Digite **{periodo_remover}** para confirmar:",
+                placeholder=periodo_remover
             )
             
-            st.caption(f"📊 Mostrando {len(df_final)} de {len(df_logs)} registros")
-        else:
-            st.warning("Estrutura de logs diferente do esperado.")
-            st.dataframe(df_display.head(20))
+            if st.button("🚨 EXCLUIR PERMANENTEMENTE", type="primary", use_container_width=True):
+                if confirmacao == periodo_remover:
+                    periodo_para_remover = obter_periodo_por_referencia(periodo_remover)
+                    
+                    if periodo_para_remover:
+                        try:
+                            db = get_db()
+                            
+                            # Deletar registros relacionados
+                            tabelas = ['disciplinas', 'ocupacao', 'nao_regencia', 'faltas', 
+                                       'turmas', 'instrutores', 'ambientes']
+                            
+                            for tabela in tabelas:
+                                try:
+                                    db.table(tabela).delete().eq('periodo_id', periodo_para_remover['id']).execute()
+                                except:
+                                    pass
+                            
+                            # Deletar período
+                            db.table('periodos').delete().eq('id', periodo_para_remover['id']).execute()
+                            
+                            limpar_todos_caches()
+                            st.success(f"✅ Período '{periodo_remover}' removido!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Erro: {str(e)}")
+                    else:
+                        st.error("Período não encontrado.")
+                else:
+                    st.error("❌ Confirmação incorreta.")
 
 st.divider()
-st.caption(f"Dashboard Digitech v2.0 • Painel Administrativo • {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
+
+
+# ============================================================
+# INFORMAÇÕES DO SISTEMA
+# ============================================================
+
+st.markdown("### 📊 Visão Geral dos Dados")
+
+if not periodos.empty:
+    # Resumo por período
+    st.markdown("#### Períodos Cadastrados")
+    
+    df_display = periodos[['mes_referencia', 'status', 'meta_hora_aluno', 'data_upload']].copy()
+    df_display.columns = ['Período', 'Status', 'Meta HA', 'Data Upload']
+    
+    # Formatar data
+    if 'Data Upload' in df_display.columns:
+        df_display['Data Upload'] = pd.to_datetime(df_display['Data Upload'], errors='coerce')
+        df_display['Data Upload'] = df_display['Data Upload'].dt.strftime('%d/%m/%Y %H:%M')
+    
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            'Meta HA': st.column_config.NumberColumn(format="%d"),
+            'Status': st.column_config.TextColumn()
+        }
+    )
+    
+    # Estatísticas
+    col1, col2, col3 = st.columns(3)
+    col1.metric("📅 Total de Períodos", len(periodos))
+    col2.metric("✅ Ativos", len(periodos[periodos['status'] == 'ATIVO']))
+    col3.metric("📦 Arquivados", len(periodos[periodos['status'] == 'ARQUIVADO']))
+
+
+# ============================================================
+# RODAPÉ
+# ============================================================
+
+st.divider()
+st.caption(f"⚙️ Painel Administrativo • Dashboard Digitech v2.0 • {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")

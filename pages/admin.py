@@ -10,7 +10,8 @@ from src.database import (
     listar_periodos,
     atualizar_meta_periodo,
     obter_periodo_por_referencia,
-    limpar_todos_caches
+    limpar_todos_caches,
+    get_db
 )
 from src.auth import inicializar_sessao, requer_autenticacao
 from src.importador import importar_planilha_completa
@@ -137,14 +138,14 @@ if arquivo_carregado:
                     
                     # Mostrar estatísticas
                     col_stats1, col_stats2, col_stats3 = st.columns(3)
-                    col_stats1.metric("📚 Turmas", estatisticas['turmas'])
-                    col_stats2.metric("👨‍🏫 Instrutores", estatisticas['instrutores'])
-                    col_stats3.metric("📖 Disciplinas", estatisticas['disciplinas'])
+                    col_stats1.metric("📚 Turmas", estatisticas.get('turmas', 0))
+                    col_stats2.metric("👨‍🏫 Instrutores", estatisticas.get('instrutores', 0))
+                    col_stats3.metric("📖 Disciplinas", estatisticas.get('disciplinas', 0))
                     
                     col_stats4, col_stats5, col_stats6 = st.columns(3)
-                    col_stats4.metric("🏢 Ocupações", estatisticas['ocupacao'])
-                    col_stats5.metric("⏰ Não Regência", estatisticas['nao_regencia'])
-                    col_stats6.metric("⚠️ Faltas", estatisticas['faltas'])
+                    col_stats4.metric("🏢 Ocupações", estatisticas.get('ocupacao', 0))
+                    col_stats5.metric("⏰ Não Regência", estatisticas.get('nao_regencia', 0))
+                    col_stats6.metric("⚠️ Faltas", estatisticas.get('faltas', 0))
                     
                     st.info("✨ Limpeza de cache automática realizada.")
                     
@@ -171,14 +172,19 @@ if arquivo_carregado:
 st.divider()
 st.markdown("### 🎯 Gestão de Metas de Hora-Aluno")
 
+# Carregar períodos com tratamento de erro
 periodos = listar_periodos(apenas_ativos=False)
 
-if periodos.empty:
-    st.info("Nenhum período cadastrado ainda. Importe uma planilha primeiro.")
+# ✅ CORREÇÃO: Verificar se DataFrame está vazio ou não tem colunas
+if periodos.empty or 'mes_referencia' not in periodos.columns:
+    st.info("📭 Nenhum período cadastrado ainda. Importe uma planilha primeiro usando o formulário acima.")
 else:
+    # ✅ CORREÇÃO: Agora só acessa se tiver dados
+    lista_periodos = periodos['mes_referencia'].tolist()
+    
     periodo_sel = st.selectbox(
         "Selecionar Período:",
-        periodos['mes_referencia'].tolist(),
+        lista_periodos,
         index=0
     )
     
@@ -192,7 +198,7 @@ else:
         
         with col1:
             st.markdown("**Meta Atual**")
-            st.metric(meta_tipo=f"({tipo_meta})", value=f"{formatar_numero(meta_atual)}")
+            st.metric(label=f"Tipo: {tipo_meta}", value=formatar_numero(meta_atual))
         
         with col2:
             nova_meta = st.number_input(
@@ -214,6 +220,7 @@ else:
                     if sucesso:
                         st.success("Meta atualizada com sucesso! ✨")
                         limpar_todos_caches()
+                        st.rerun()
                     else:
                         st.error("Erro ao salvar meta.")
                 else:
@@ -226,65 +233,69 @@ else:
 
 st.divider()
 st.markdown("### 🗑️ Remover Período")
-st.warning("⚠️ Esta ação é irreversível! Todos os dados do período serão excluídos permanentemente.")
 
-with st.form("form_remover_periodo", clear_on_submit=True):
-    lista_periodos = periodos['mes_referencia'].tolist()
-    periodo_remover = st.selectbox(
-        "Selecione o período para excluir:",
-        ["-- Selecione --"] + lista_periodos
-    )
+# ✅ CORREÇÃO: Verificar novamente se há períodos
+if periodos.empty or 'mes_referencia' not in periodos.columns:
+    st.info("Não há períodos para remover.")
+else:
+    st.warning("⚠️ Esta ação é irreversível! Todos os dados do período serão excluídos permanentemente.")
     
-    confirmacao = st.text_input(
-        "Digite o código do período para confirmar:",
-        placeholder="Ex: 03 - Mar 2025"
-    )
+    lista_periodos_remover = periodos['mes_referencia'].tolist()
     
-    btn_remover = st.form_submit_button("🚨 EXCLUIR DEFINITIVAMENTE", type="primary", use_container_width=True)
-    
-    if btn_remover:
-        if periodo_remover == "-- Selecione --":
-            st.warning("Por favor, selecione um período.")
-        elif confirmacao != periodo_remover:
-            st.error("❌ Código de confirmação incorreto.")
-        else:
-            periodo_para_remover = obter_periodo_por_referencia(confirmacao)
-            
-            if periodo_para_remover:
-                # Deletar diretamente pelo Supabase (CASCADE handle rest)
-                from src.database import get_db
-                
-                db = get_db()
-                
-                # Primeiro remover registros relacionados para evitar erro de FK
-                tb_relacionadas = [
-                    'disciplinas', 'turmas', 'instrutores', 'ambientes',
-                    'ocupacao', 'nao_regencia', 'faltas'
-                ]
-                
-                for tabela in tb_relacionadas:
-                    try:
-                        db.table(tabela)\
-                            .delete()\
-                            .eq('periodo_id', periodo_para_remover['id'])\
-                            .execute()
-                    except:
-                        pass
-                
-                # Agora deletar o próprio período
-                response = db.table('periodos')\
-                    .delete()\
-                    .eq('id', periodo_para_remover['id'])\
-                    .execute()
-                
-                if response:
-                    limpar_todos_caches()
-                    st.success(f"✅ Período '{confirmacao}' removido com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("Erro ao remover período.")
+    with st.form("form_remover_periodo", clear_on_submit=True):
+        periodo_remover = st.selectbox(
+            "Selecione o período para excluir:",
+            ["-- Selecione --"] + lista_periodos_remover
+        )
+        
+        confirmacao = st.text_input(
+            "Digite o código do período para confirmar:",
+            placeholder="Ex: 03 - Mar 2025"
+        )
+        
+        btn_remover = st.form_submit_button("🚨 EXCLUIR DEFINITIVAMENTE", type="primary", use_container_width=True)
+        
+        if btn_remover:
+            if periodo_remover == "-- Selecione --":
+                st.warning("Por favor, selecione um período.")
+            elif confirmacao != periodo_remover:
+                st.error("❌ Código de confirmação incorreto.")
             else:
-                st.error("Período não encontrado.")
+                periodo_para_remover = obter_periodo_por_referencia(confirmacao)
+                
+                if periodo_para_remover:
+                    try:
+                        db = get_db()
+                        
+                        # Deletar registros relacionados primeiro (CASCADE deveria fazer isso, mas por segurança)
+                        tabelas_relacionadas = [
+                            'disciplinas', 'turmas', 'instrutores', 'ambientes',
+                            'ocupacao', 'nao_regencia', 'faltas'
+                        ]
+                        
+                        for tabela in tabelas_relacionadas:
+                            try:
+                                db.table(tabela)\
+                                    .delete()\
+                                    .eq('periodo_id', periodo_para_remover['id'])\
+                                    .execute()
+                            except Exception:
+                                pass  # Ignora se tabela não existir
+                        
+                        # Agora deletar o próprio período
+                        response = db.table('periodos')\
+                            .delete()\
+                            .eq('id', periodo_para_remover['id'])\
+                            .execute()
+                        
+                        limpar_todos_caches()
+                        st.success(f"✅ Período '{confirmacao}' removido com sucesso!")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Erro ao remover período: {str(e)}")
+                else:
+                    st.error("Período não encontrado.")
 
 
 # ============================================================
@@ -298,40 +309,58 @@ st.caption("Registro de alterações realizadas no sistema")
 from src.database import listar_auditoria
 
 limite_logs = st.slider("Limite de registros:", 50, 500, 100, step=50)
-filtro_tabla = st.multiselect("Filtrar por tabela:", ['turmas', 'disciplinas', 'instrutores', 'ambientes', 'nao_regencia', 'faltas', 'periodos'])
+
+# Lista de tabelas para filtro
+tabelas_disponiveis = ['turmas', 'disciplinas', 'instrutores', 'ambientes', 'nao_regencia', 'faltas', 'periodos']
+filtro_tabela = st.multiselect("Filtrar por tabela:", tabelas_disponiveis)
 
 df_logs = listar_auditoria(limite=limite_logs)
 
-if filtro_tabla:
-    df_logs = df_logs[df_logs['tabela'].isin(filtro_tabla)]
-
+# ✅ CORREÇÃO: Verificar se há logs e se a coluna existe
 if df_logs.empty:
-    st.info("Nenhum registro de auditoria encontrado.")
+    st.info("📭 Nenhum registro de auditoria encontrado.")
 else:
-    # Preparar para exibição
-    df_display = df_logs.head(200).copy()  # Limitar visualização
+    # Aplicar filtro se selecionado
+    if filtro_tabela and 'tabela' in df_logs.columns:
+        df_logs = df_logs[df_logs['tabela'].isin(filtro_tabela)]
     
-    # Formatamento básico
-    if 'created_at' in df_display.columns:
-        df_display['created_at'] = pd.to_datetime(df_display['created_at'], errors='coerce')
-        df_display['timestamp'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M:%S')
-    
-    # Selecionar colunas
-    cols_show = ['timestamp', 'tabela', 'operacao', 'usuario']
-    
-    if all(col in df_display.columns for col in cols_show):
-        df_final = df_display[cols_show].copy()
-        df_final.columns = ['Data/Hora', 'Tabela', 'Operação', 'Usuário']
+    if df_logs.empty:
+        st.info("Nenhum registro encontrado com os filtros aplicados.")
+    else:
+        # Preparar para exibição
+        df_display = df_logs.head(200).copy()
         
-        st.dataframe(
-            df_final,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                'Operação': st.column_config.TextColumn(width="medium"),
-                'Tabela': st.column_config.TextColumn(width="medium")
+        # Formatamento de data
+        if 'created_at' in df_display.columns:
+            df_display['created_at'] = pd.to_datetime(df_display['created_at'], errors='coerce')
+            df_display['timestamp'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M:%S')
+        
+        # Selecionar colunas existentes
+        cols_desejadas = ['timestamp', 'tabela', 'operacao', 'usuario']
+        cols_existentes = [col for col in cols_desejadas if col in df_display.columns]
+        
+        if cols_existentes:
+            df_final = df_display[cols_existentes].copy()
+            
+            # Renomear colunas
+            rename_map = {
+                'timestamp': 'Data/Hora',
+                'tabela': 'Tabela',
+                'operacao': 'Operação',
+                'usuario': 'Usuário'
             }
-        )
+            df_final = df_final.rename(columns={k: v for k, v in rename_map.items() if k in df_final.columns})
+            
+            st.dataframe(
+                df_final,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            st.caption(f"📊 Mostrando {len(df_final)} de {len(df_logs)} registros")
+        else:
+            st.warning("Estrutura de logs diferente do esperado.")
+            st.dataframe(df_display.head(20))
 
 st.divider()
-st.caption(f"Total de logs: {len(df_logs)} • Última atualização: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
+st.caption(f"Dashboard Digitech v2.0 • Painel Administrativo • {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")

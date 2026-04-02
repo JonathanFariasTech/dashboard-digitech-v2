@@ -1,13 +1,12 @@
 """
 Módulo para importação de planilhas Excel para o banco de dados
-VERSÃO ROBUSTA - Trata todos os tipos de erros comuns de Excel
+VERSÃO LIMPA - Sem mensagens de debug
 """
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from typing import Tuple, Dict, Optional, List
-from datetime import datetime
-import io
 
 
 # ============================================================
@@ -26,118 +25,124 @@ MESES_PT = {
 
 
 # ============================================================
-# FUNÇÕES DE CONVERSÃO SEGURA
+# FUNÇÕES DE LIMPEZA E CONVERSÃO
 # ============================================================
 
-def safe_int(value, default: int = 0) -> int:
-    """
-    Converte valor para inteiro de forma segura
-    Trata None, NaN, strings vazias, etc.
-    """
-    if value is None:
-        return default
+def limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Limpa todo o DataFrame substituindo NaN por valores padrão"""
+    df = df.copy()
     
-    # Verifica NaN (float)
-    if isinstance(value, float):
-        if pd.isna(value):
-            return default
-        return int(value)
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].fillna('')
+            df[col] = df[col].astype(str)
+            df[col] = df[col].replace(['nan', 'NaN', 'NAN', 'None', 'none', 'NONE', 'null', 'NULL'], '')
+            df[col] = df[col].str.strip()
+        elif df[col].dtype in ['float64', 'float32', 'int64', 'int32']:
+            df[col] = df[col].fillna(0)
     
-    # Verifica NaN (pandas)
-    try:
-        if pd.isna(value):
-            return default
-    except (TypeError, ValueError):
-        pass
+    return df
+
+
+def valor_inteiro(valor, padrao: int = 0) -> int:
+    """Converte qualquer valor para inteiro de forma segura"""
+    if valor is None:
+        return padrao
     
-    # String vazia
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return default
+    if isinstance(valor, int):
+        return valor
+    
+    if isinstance(valor, float):
+        if np.isnan(valor) or pd.isna(valor):
+            return padrao
+        return int(valor)
+    
+    if isinstance(valor, (np.integer, np.floating)):
+        if pd.isna(valor):
+            return padrao
+        return int(valor)
+    
+    if isinstance(valor, str):
+        valor = valor.strip()
+        if not valor or valor.lower() in ['nan', 'none', 'null', '', '-']:
+            return padrao
         try:
-            return int(float(value))
-        except (ValueError, TypeError):
-            return default
-    
-    # Tenta converter diretamente
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    """
-    Converte valor para float de forma segura
-    """
-    if value is None:
-        return default
-    
-    if isinstance(value, float):
-        if pd.isna(value):
-            return default
-        return value
+            return int(float(valor))
+        except:
+            return padrao
     
     try:
-        if pd.isna(value):
-            return default
-    except (TypeError, ValueError):
-        pass
+        if pd.isna(valor):
+            return padrao
+        return int(float(valor))
+    except:
+        return padrao
+
+
+def valor_float(valor, padrao: float = 0.0) -> float:
+    """Converte qualquer valor para float de forma segura"""
+    if valor is None:
+        return padrao
     
-    if isinstance(value, str):
-        value = value.strip().replace(',', '.')
-        if not value:
-            return default
+    if isinstance(valor, (int, float)):
+        if isinstance(valor, float) and (np.isnan(valor) or pd.isna(valor)):
+            return padrao
+        return float(valor)
+    
+    if isinstance(valor, (np.integer, np.floating)):
+        if pd.isna(valor):
+            return padrao
+        return float(valor)
+    
+    if isinstance(valor, str):
+        valor = valor.strip().replace(',', '.')
+        if not valor or valor.lower() in ['nan', 'none', 'null', '', '-']:
+            return padrao
         try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
+            return float(valor)
+        except:
+            return padrao
     
     try:
-        return float(value)
-    except (ValueError, TypeError):
-        return default
+        if pd.isna(valor):
+            return padrao
+        return float(valor)
+    except:
+        return padrao
 
 
-def safe_str(value, default: str = "") -> str:
-    """
-    Converte valor para string de forma segura
-    Remove 'nan' e valores nulos
-    """
-    if value is None:
-        return default
+def valor_texto(valor, padrao: str = "") -> str:
+    """Converte qualquer valor para texto de forma segura"""
+    if valor is None:
+        return padrao
     
     try:
-        if pd.isna(value):
-            return default
-    except (TypeError, ValueError):
+        if pd.isna(valor):
+            return padrao
+    except:
         pass
     
-    resultado = str(value).strip()
+    texto = str(valor).strip()
     
-    # Remove strings que representam nulo
-    if resultado.lower() in ['nan', 'none', 'null', 'na', 'n/a', '-']:
-        return default
+    if texto.lower() in ['nan', 'none', 'null', 'na', 'n/a', '-']:
+        return padrao
     
-    return resultado
+    return texto
 
 
-def safe_date(value, formato: str = '%Y-%m-%d') -> Optional[str]:
-    """
-    Converte valor para data no formato string para o BD
-    """
-    if value is None:
+def valor_data(valor, formato: str = '%Y-%m-%d') -> Optional[str]:
+    """Converte qualquer valor para data no formato string"""
+    if valor is None:
         return None
     
     try:
-        if pd.isna(value):
+        if pd.isna(valor):
             return None
-    except (TypeError, ValueError):
+    except:
         pass
     
     try:
-        data = pd.to_datetime(value)
+        data = pd.to_datetime(valor, errors='coerce')
         if pd.isna(data):
             return None
         return data.strftime(formato)
@@ -146,58 +151,33 @@ def safe_date(value, formato: str = '%Y-%m-%d') -> Optional[str]:
 
 
 # ============================================================
-# FUNÇÕES DE NORMALIZAÇÃO DE DADOS
+# FUNÇÕES DE NORMALIZAÇÃO
 # ============================================================
 
 def normalizar_turno(turno_raw) -> str:
-    """
-    Normaliza o texto do turno vindo do Excel para o padrão do BD
-    Aceita: manhã, manha, MANHÃ, Matutino, M, etc.
-    """
-    valor = safe_str(turno_raw, "").upper()
+    """Normaliza turno para valores aceitos pelo BD"""
+    valor = valor_texto(turno_raw, "").upper()
     
     if not valor:
-        return 'Manhã'  # Valor padrão
-    
-    # Manhã
-    if any(x in valor for x in ['MANHÃ', 'MANHA', 'MATUTINO']):
-        return 'Manhã'
-    if valor == 'M':
         return 'Manhã'
     
-    # Tarde
-    if any(x in valor for x in ['TARDE', 'VESPERTINO']):
+    if any(x in valor for x in ['MANHÃ', 'MANHA', 'MATUTINO']) or valor == 'M':
+        return 'Manhã'
+    if any(x in valor for x in ['TARDE', 'VESPERTINO']) or valor == 'T':
         return 'Tarde'
-    if valor == 'T':
-        return 'Tarde'
-    
-    # Noite
-    if any(x in valor for x in ['NOITE', 'NOTURNO']):
+    if any(x in valor for x in ['NOITE', 'NOTURNO']) or valor == 'N':
         return 'Noite'
-    if valor == 'N':
-        return 'Noite'
-    
-    # Integral
-    if 'INTEGRAL' in valor:
+    if 'INTEGRAL' in valor or valor == 'I':
         return 'Integral'
-    if valor == 'I':
-        return 'Integral'
-    
-    # EAD
-    if any(x in valor for x in ['EAD', 'ONLINE', 'VIRTUAL', 'DISTÂNCIA', 'DISTANCIA']):
-        return 'EAD'
-    if valor == 'E':
+    if any(x in valor for x in ['EAD', 'ONLINE', 'VIRTUAL', 'DISTÂNCIA', 'DISTANCIA']) or valor == 'E':
         return 'EAD'
     
-    # Fallback
     return 'Manhã'
 
 
 def normalizar_tipo_ambiente(tipo_raw) -> str:
-    """
-    Normaliza o tipo de ambiente para o padrão do BD
-    """
-    valor = safe_str(tipo_raw, "").upper()
+    """Normaliza tipo de ambiente"""
+    valor = valor_texto(tipo_raw, "").upper()
     
     if not valor:
         return 'Sala'
@@ -215,42 +195,27 @@ def normalizar_tipo_ambiente(tipo_raw) -> str:
 
 
 def normalizar_status(status_raw) -> str:
-    """
-    Normaliza status da disciplina para valores padrão
-    """
-    valor = safe_str(status_raw, "").upper()
+    """Normaliza status da disciplina"""
+    valor = valor_texto(status_raw, "").upper()
     
     if not valor:
         return 'Não Iniciado'
     
-    # Concluído
-    if any(x in valor for x in ['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO', 'COMPLETO', 'TERMINADO']):
+    if any(x in valor for x in ['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO', 'COMPLETO']):
         return 'Concluído'
-    
-    # Em Andamento
-    if any(x in valor for x in ['ANDAMENTO', 'CURSO', 'PROGRESSO', 'EXECUTANDO']):
+    if any(x in valor for x in ['ANDAMENTO', 'CURSO', 'PROGRESSO']):
         return 'Em Andamento'
-    
-    # Cancelado
-    if any(x in valor for x in ['CANCELAD', 'ABORT']):
+    if 'CANCELAD' in valor:
         return 'Cancelado'
-    
-    # Suspenso
-    if any(x in valor for x in ['SUSPENS', 'PAUSAD', 'PARAD']):
+    if 'SUSPENS' in valor:
         return 'Suspenso'
     
     return 'Não Iniciado'
 
 
 def normalizar_booleano(valor_raw) -> bool:
-    """
-    Converte valor para booleano
-    """
-    valor = safe_str(valor_raw, "").upper()
-    
-    if not valor:
-        return False
-    
+    """Converte para booleano"""
+    valor = valor_texto(valor_raw, "").upper()
     return valor in ['SIM', 'S', 'TRUE', '1', 'YES', 'Y', 'VERDADEIRO', 'V']
 
 
@@ -259,9 +224,7 @@ def normalizar_booleano(valor_raw) -> bool:
 # ============================================================
 
 def validar_planilha(arquivo) -> Tuple[bool, str]:
-    """
-    Valida se a planilha tem todas as abas obrigatórias
-    """
+    """Valida se a planilha tem todas as abas obrigatórias"""
     try:
         xls = pd.ExcelFile(arquivo)
         abas_arquivo = xls.sheet_names
@@ -271,15 +234,12 @@ def validar_planilha(arquivo) -> Tuple[bool, str]:
             return False, f"Faltam as abas: {', '.join(abas_faltantes)}"
         
         return True, "Planilha validada com sucesso!"
-    
     except Exception as e:
         return False, f"Erro ao ler arquivo: {str(e)}"
 
 
 def extrair_mes_automatico(arquivo) -> Optional[str]:
-    """
-    Extrai o mês de referência automaticamente da planilha
-    """
+    """Extrai o mês de referência automaticamente da planilha"""
     try:
         arquivo.seek(0)
         df_temp = pd.read_excel(arquivo, sheet_name="OCUPAÇÃO", usecols=["DATA"])
@@ -290,7 +250,6 @@ def extrair_mes_automatico(arquivo) -> Optional[str]:
             mes_num = data_predominante.month
             ano = data_predominante.year
             return f"{mes_num:02d} - {MESES_PT[mes_num]} {ano}"
-    
     except Exception:
         pass
     
@@ -302,34 +261,30 @@ def extrair_mes_automatico(arquivo) -> Optional[str]:
 # ============================================================
 
 def importar_turmas(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[str, str]]:
-    """
-    Importa turmas do Excel para o banco
-    """
+    """Importa turmas do Excel para o banco"""
     try:
         df = pd.read_excel(xls, sheet_name="TURMAS")
+        df = limpar_dataframe(df)
     except Exception as e:
-        st.error(f"Erro ao ler aba TURMAS: {str(e)}")
         return 0, {}
     
     mapeamento = {}
     turmas = []
     
     for idx, row in df.iterrows():
-        # Buscar código da turma
-        codigo = safe_str(row.get('ID_TURMA', row.get('CODIGO', row.get('ID', ''))))
+        codigo = valor_texto(row.get('ID_TURMA', row.get('CODIGO', row.get('ID', ''))))
         
-        # Ignorar linhas sem código
         if not codigo:
             continue
         
         turma = {
             'periodo_id': periodo_id,
             'codigo_turma': codigo,
-            'nome_turma': safe_str(row.get('NOME_TURMA', row.get('NOME', row.get('CURSO', '')))),
-            'curso': safe_str(row.get('CURSO', '')),
+            'nome_turma': valor_texto(row.get('NOME_TURMA', row.get('NOME', row.get('CURSO', '')))),
+            'curso': valor_texto(row.get('CURSO', '')),
             'turno': normalizar_turno(row.get('TURNO')),
-            'vagas_total': safe_int(row.get('VAGAS_TOTAL', row.get('VAGAS', 0))),
-            'vagas_ocupadas': safe_int(row.get('VAGAS_OCUPADAS', row.get('ALUNOS', 0)))
+            'vagas_total': valor_inteiro(row.get('VAGAS_TOTAL', row.get('VAGAS', 0))),
+            'vagas_ocupadas': valor_inteiro(row.get('VAGAS_OCUPADAS', row.get('ALUNOS', 0)))
         }
         turmas.append(turma)
     
@@ -342,31 +297,27 @@ def importar_turmas(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[str, 
             if hasattr(response, 'data') and response.data:
                 for item in response.data:
                     mapeamento[item['codigo_turma']] = item['id']
-        except Exception as e:
-            st.error(f"Erro ao inserir turmas: {str(e)}")
+        except Exception:
             return 0, {}
     
     return len(turmas), mapeamento
 
 
 def importar_instrutores(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[str, str]]:
-    """
-    Importa instrutores do Excel para o banco
-    """
+    """Importa instrutores do Excel para o banco"""
     try:
         df = pd.read_excel(xls, sheet_name="INSTRUTORES")
-    except Exception as e:
-        st.error(f"Erro ao ler aba INSTRUTORES: {str(e)}")
+        df = limpar_dataframe(df)
+    except Exception:
         return 0, {}
     
     mapeamento = {}
     instrutores = []
     
     for idx, row in df.iterrows():
-        codigo = safe_str(row.get('ID', row.get('ID_INSTRUTOR', row.get('CODIGO', ''))))
-        nome = safe_str(row.get('NOME_COMPLETO', row.get('NOME', '')))
+        codigo = valor_texto(row.get('ID', row.get('ID_INSTRUTOR', row.get('CODIGO', ''))))
+        nome = valor_texto(row.get('NOME_COMPLETO', row.get('NOME', '')))
         
-        # Ignorar linhas sem código ou nome
         if not codigo or not nome:
             continue
         
@@ -374,9 +325,9 @@ def importar_instrutores(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[
             'periodo_id': periodo_id,
             'codigo_instrutor': codigo,
             'nome_completo': nome,
-            'email': safe_str(row.get('EMAIL')) or None,
-            'especialidade': safe_str(row.get('ESPECIALIDADE')) or None,
-            'carga_horaria_contrato': safe_int(row.get('CARGA_HORARIA', row.get('CH', 40)), 40)
+            'email': valor_texto(row.get('EMAIL')) or None,
+            'especialidade': valor_texto(row.get('ESPECIALIDADE')) or None,
+            'carga_horaria_contrato': valor_inteiro(row.get('CARGA_HORARIA', row.get('CH', 40)), 40)
         }
         instrutores.append(instrutor)
     
@@ -389,30 +340,26 @@ def importar_instrutores(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[
             if hasattr(response, 'data') and response.data:
                 for item in response.data:
                     mapeamento[item['codigo_instrutor']] = item['id']
-        except Exception as e:
-            st.error(f"Erro ao inserir instrutores: {str(e)}")
+        except Exception:
             return 0, {}
     
     return len(instrutores), mapeamento
 
 
 def importar_ambientes(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[str, str]]:
-    """
-    Importa ambientes do Excel para o banco
-    """
+    """Importa ambientes do Excel para o banco"""
     try:
         df = pd.read_excel(xls, sheet_name="AMBIENTES")
-    except Exception as e:
-        st.error(f"Erro ao ler aba AMBIENTES: {str(e)}")
+        df = limpar_dataframe(df)
+    except Exception:
         return 0, {}
     
     mapeamento = {}
     ambientes = []
     
     for idx, row in df.iterrows():
-        nome = safe_str(row.get('AMBIENTE', row.get('NOME', row.get('NOME_AMBIENTE', ''))))
+        nome = valor_texto(row.get('AMBIENTE', row.get('NOME', row.get('NOME_AMBIENTE', ''))))
         
-        # Ignorar linhas sem nome
         if not nome:
             continue
         
@@ -421,7 +368,7 @@ def importar_ambientes(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[st
             'codigo_ambiente': nome,
             'nome_ambiente': nome,
             'tipo': normalizar_tipo_ambiente(row.get('TIPO')),
-            'capacidade': safe_int(row.get('CAPACIDADE', 0)),
+            'capacidade': valor_inteiro(row.get('CAPACIDADE', 0)),
             'virtual': normalizar_booleano(row.get('VIRTUAL', 'NÃO'))
         }
         ambientes.append(ambiente)
@@ -435,8 +382,7 @@ def importar_ambientes(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[st
             if hasattr(response, 'data') and response.data:
                 for item in response.data:
                     mapeamento[item['nome_ambiente']] = item['id']
-        except Exception as e:
-            st.error(f"Erro ao inserir ambientes: {str(e)}")
+        except Exception:
             return 0, {}
     
     return len(ambientes), mapeamento
@@ -445,37 +391,31 @@ def importar_ambientes(xls: pd.ExcelFile, periodo_id: str) -> Tuple[int, Dict[st
 def importar_disciplinas(xls: pd.ExcelFile, periodo_id: str, 
                          mapa_turmas: Dict[str, str],
                          mapa_instrutores: Dict[str, str]) -> int:
-    """
-    Importa disciplinas do Excel para o banco
-    """
+    """Importa disciplinas do Excel para o banco"""
     try:
-        # Tenta com skiprows primeiro (formato comum)
         try:
             df = pd.read_excel(xls, sheet_name="DISCIPLINAS", skiprows=1)
         except:
             df = pd.read_excel(xls, sheet_name="DISCIPLINAS")
-    except Exception as e:
-        st.error(f"Erro ao ler aba DISCIPLINAS: {str(e)}")
+        df = limpar_dataframe(df)
+    except Exception:
         return 0
     
     disciplinas = []
     
     for idx, row in df.iterrows():
-        codigo_turma = safe_str(row.get('ID_TURMA', row.get('TURMA', '')))
+        codigo_turma = valor_texto(row.get('ID_TURMA', row.get('TURMA', '')))
         turma_id = mapa_turmas.get(codigo_turma)
         
-        # Pula se não encontrar a turma
         if not turma_id:
             continue
         
-        nome_disc = safe_str(row.get('NOME_DISCIPLINA', row.get('DISCIPLINA', row.get('NOME', ''))))
+        nome_disc = valor_texto(row.get('NOME_DISCIPLINA', row.get('DISCIPLINA', row.get('NOME', ''))))
         
-        # Pula se não tiver nome
         if not nome_disc:
             continue
         
-        # Buscar instrutor (opcional)
-        codigo_instrutor = safe_str(row.get('ID_INSTRUTOR', row.get('INSTRUTOR', '')))
+        codigo_instrutor = valor_texto(row.get('ID_INSTRUTOR', row.get('INSTRUTOR', '')))
         instrutor_id = mapa_instrutores.get(codigo_instrutor)
         
         disciplina = {
@@ -483,7 +423,7 @@ def importar_disciplinas(xls: pd.ExcelFile, periodo_id: str,
             'turma_id': turma_id,
             'instrutor_id': instrutor_id,
             'nome_disciplina': nome_disc,
-            'carga_horaria': safe_int(row.get('CARGA_HORARIA', row.get('CH', 0))),
+            'carga_horaria': valor_inteiro(row.get('CARGA_HORARIA', row.get('CH', 0))),
             'status': normalizar_status(row.get('STATUS'))
         }
         disciplinas.append(disciplina)
@@ -494,8 +434,7 @@ def importar_disciplinas(xls: pd.ExcelFile, periodo_id: str,
             db = get_db()
             response = db.table('disciplinas').insert(disciplinas).execute()
             return len(response.data) if hasattr(response, 'data') and response.data else 0
-        except Exception as e:
-            st.error(f"Erro ao inserir disciplinas: {str(e)}")
+        except Exception:
             return 0
     
     return 0
@@ -503,45 +442,36 @@ def importar_disciplinas(xls: pd.ExcelFile, periodo_id: str,
 
 def importar_ocupacao(xls: pd.ExcelFile, periodo_id: str,
                       mapa_ambientes: Dict[str, str]) -> int:
-    """
-    Importa registros de ocupação do Excel para o banco
-    """
+    """Importa registros de ocupação do Excel para o banco"""
     try:
         df = pd.read_excel(xls, sheet_name="OCUPAÇÃO")
-    except Exception as e:
-        st.error(f"Erro ao ler aba OCUPAÇÃO: {str(e)}")
+        df = limpar_dataframe(df)
+    except Exception:
         return 0
     
     registros = []
     
     for idx, row in df.iterrows():
-        nome_ambiente = safe_str(row.get('AMBIENTE', ''))
+        nome_ambiente = valor_texto(row.get('AMBIENTE', ''))
         ambiente_id = mapa_ambientes.get(nome_ambiente)
         
-        # Pula se não encontrar o ambiente
         if not ambiente_id:
             continue
         
-        # Processar data
-        data = safe_date(row.get('DATA'))
+        data = valor_data(row.get('DATA'))
         if not data:
             continue
         
-        # Processar percentual (pode vir como 0.75 ou 75)
-        percentual = safe_float(row.get('PERCENTUAL_OCUPACAO', row.get('OCUPACAO', 0)))
-        
-        # Normalizar: se < 1, assume que está em decimal (0.75 = 75%)
+        percentual = valor_float(row.get('PERCENTUAL_OCUPACAO', row.get('OCUPACAO', 0)))
         if 0 < percentual <= 1:
             percentual = percentual * 100
-        
-        # Garantir limite de 0-100
         percentual = max(0, min(100, percentual))
         
         registro = {
             'periodo_id': periodo_id,
             'ambiente_id': ambiente_id,
             'data_ocupacao': data,
-            'turno': normalizar_turno(row.get('TURNO')) if row.get('TURNO') else None,
+            'turno': normalizar_turno(row.get('TURNO')) if valor_texto(row.get('TURNO')) else None,
             'percentual_ocupacao': round(percentual, 2)
         }
         registros.append(registro)
@@ -552,8 +482,7 @@ def importar_ocupacao(xls: pd.ExcelFile, periodo_id: str,
             db = get_db()
             response = db.table('ocupacao').insert(registros).execute()
             return len(response.data) if hasattr(response, 'data') and response.data else 0
-        except Exception as e:
-            st.error(f"Erro ao inserir ocupação: {str(e)}")
+        except Exception:
             return 0
     
     return 0
@@ -561,32 +490,28 @@ def importar_ocupacao(xls: pd.ExcelFile, periodo_id: str,
 
 def importar_nao_regencia(xls: pd.ExcelFile, periodo_id: str,
                           mapa_instrutores: Dict[str, str]) -> int:
-    """
-    Importa registros de não regência do Excel para o banco
-    """
+    """Importa registros de não regência do Excel para o banco"""
     try:
         df = pd.read_excel(xls, sheet_name="NÃO_REGÊNCIA")
-    except Exception as e:
-        st.error(f"Erro ao ler aba NÃO_REGÊNCIA: {str(e)}")
+        df = limpar_dataframe(df)
+    except Exception:
         return 0
     
     registros = []
     
     for idx, row in df.iterrows():
-        codigo_instrutor = safe_str(row.get('ID_INSTRUTOR', row.get('INSTRUTOR', '')))
+        codigo_instrutor = valor_texto(row.get('ID_INSTRUTOR', row.get('INSTRUTOR', '')))
         instrutor_id = mapa_instrutores.get(codigo_instrutor)
         
-        # Pula se não encontrar o instrutor
         if not instrutor_id:
             continue
         
-        tipo = safe_str(row.get('TIPO_ATIVIDADE', row.get('TIPO', row.get('ATIVIDADE', 'Outro'))))
+        tipo = valor_texto(row.get('TIPO_ATIVIDADE', row.get('TIPO', row.get('ATIVIDADE', 'Outro'))))
         if not tipo:
             tipo = 'Outro'
         
-        horas = safe_float(row.get('HORAS_NAO_REGENCIA', row.get('HORAS', 0)))
+        horas = valor_float(row.get('HORAS_NAO_REGENCIA', row.get('HORAS', 0)))
         
-        # Pula se não tiver horas
         if horas <= 0:
             continue
         
@@ -595,8 +520,8 @@ def importar_nao_regencia(xls: pd.ExcelFile, periodo_id: str,
             'instrutor_id': instrutor_id,
             'tipo_atividade': tipo,
             'horas': round(horas, 2),
-            'data_inicio': safe_date(row.get('DATA_INICIO', row.get('DATA'))),
-            'data_fim': safe_date(row.get('DATA_FIM', row.get('DATA')))
+            'data_inicio': valor_data(row.get('DATA_INICIO', row.get('DATA'))),
+            'data_fim': valor_data(row.get('DATA_FIM', row.get('DATA')))
         }
         registros.append(registro)
     
@@ -606,8 +531,7 @@ def importar_nao_regencia(xls: pd.ExcelFile, periodo_id: str,
             db = get_db()
             response = db.table('nao_regencia').insert(registros).execute()
             return len(response.data) if hasattr(response, 'data') and response.data else 0
-        except Exception as e:
-            st.error(f"Erro ao inserir não regência: {str(e)}")
+        except Exception:
             return 0
     
     return 0
@@ -615,13 +539,11 @@ def importar_nao_regencia(xls: pd.ExcelFile, periodo_id: str,
 
 def importar_faltas(xls: pd.ExcelFile, periodo_id: str,
                     mapa_turmas: Dict[str, str]) -> int:
-    """
-    Importa registros de faltas do Excel para o banco
-    """
+    """Importa registros de faltas do Excel para o banco"""
     try:
         df = pd.read_excel(xls, sheet_name="FALTAS")
-    except Exception as e:
-        st.error(f"Erro ao ler aba FALTAS: {str(e)}")
+        df = limpar_dataframe(df)
+    except Exception:
         return 0
     
     if df.empty:
@@ -630,23 +552,21 @@ def importar_faltas(xls: pd.ExcelFile, periodo_id: str,
     registros = []
     
     for idx, row in df.iterrows():
-        # Data é obrigatória
-        data = safe_date(row.get('DATA_FALTA', row.get('DATA')))
+        data = valor_data(row.get('DATA_FALTA', row.get('DATA')))
         if not data:
             continue
         
-        # Turma (opcional)
-        codigo_turma = safe_str(row.get('ID_TURMA', row.get('TURMA', '')))
+        codigo_turma = valor_texto(row.get('ID_TURMA', row.get('TURMA', '')))
         turma_id = mapa_turmas.get(codigo_turma)
         
-        quantidade = safe_int(row.get('QUANTIDADE', row.get('QTD', 1)), 1)
+        quantidade = valor_inteiro(row.get('QUANTIDADE', row.get('QTD', 1)), 1)
         
         registro = {
             'periodo_id': periodo_id,
             'turma_id': turma_id,
             'data_falta': data,
             'quantidade_alunos': max(1, quantidade),
-            'motivo': safe_str(row.get('MOTIVO')) or None
+            'motivo': valor_texto(row.get('MOTIVO')) or None
         }
         registros.append(registro)
     
@@ -656,8 +576,7 @@ def importar_faltas(xls: pd.ExcelFile, periodo_id: str,
             db = get_db()
             response = db.table('faltas').insert(registros).execute()
             return len(response.data) if hasattr(response, 'data') and response.data else 0
-        except Exception as e:
-            st.error(f"Erro ao inserir faltas: {str(e)}")
+        except Exception:
             return 0
     
     return 0
@@ -668,16 +587,7 @@ def importar_faltas(xls: pd.ExcelFile, periodo_id: str,
 # ============================================================
 
 def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, str, Dict]:
-    """
-    Importa uma planilha completa para o banco de dados
-    
-    Args:
-        arquivo: Arquivo Excel carregado
-        usuario: Nome do usuário que está importando
-        
-    Returns:
-        Tupla (sucesso, mensagem, estatísticas)
-    """
+    """Importa uma planilha completa para o banco de dados"""
     estatisticas = {
         'turmas': 0,
         'instrutores': 0,
@@ -699,14 +609,14 @@ def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, s
         arquivo.seek(0)
         mes_ref = extrair_mes_automatico(arquivo)
         if not mes_ref:
-            return False, "Não foi possível detectar o mês automaticamente. Verifique a coluna DATA na aba OCUPAÇÃO.", estatisticas
+            return False, "Não foi possível detectar o mês automaticamente.", estatisticas
         
         # 3. Verificar se período já existe
         from src.database import obter_periodo_por_referencia, criar_periodo, limpar_todos_caches
         
         periodo_existente = obter_periodo_por_referencia(mes_ref)
         if periodo_existente:
-            return False, f"O período '{mes_ref}' já existe. Delete-o primeiro se quiser reimportar.", estatisticas
+            return False, f"O período '{mes_ref}' já existe. Delete-o primeiro.", estatisticas
         
         # 4. Criar período
         periodo = criar_periodo(mes_ref, usuario)
@@ -719,46 +629,23 @@ def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, s
         arquivo.seek(0)
         xls = pd.ExcelFile(arquivo)
         
-        # 6. Importar dados em ordem de dependência
-        
-        # 6.1 Turmas (base para disciplinas e faltas)
+        # 6. Importar dados (ordem de dependência)
         qtd, mapa_turmas = importar_turmas(xls, periodo_id)
         estatisticas['turmas'] = qtd
-        st.write(f"✅ Turmas importadas: {qtd}")
         
-        # 6.2 Instrutores (base para disciplinas e NR)
         qtd, mapa_instrutores = importar_instrutores(xls, periodo_id)
         estatisticas['instrutores'] = qtd
-        st.write(f"✅ Instrutores importados: {qtd}")
         
-        # 6.3 Ambientes (base para ocupação)
         qtd, mapa_ambientes = importar_ambientes(xls, periodo_id)
         estatisticas['ambientes'] = qtd
-        st.write(f"✅ Ambientes importados: {qtd}")
         
-        # 6.4 Disciplinas (depende de turmas e instrutores)
-        estatisticas['disciplinas'] = importar_disciplinas(
-            xls, periodo_id, mapa_turmas, mapa_instrutores
-        )
-        st.write(f"✅ Disciplinas importadas: {estatisticas['disciplinas']}")
+        estatisticas['disciplinas'] = importar_disciplinas(xls, periodo_id, mapa_turmas, mapa_instrutores)
         
-        # 6.5 Ocupação (depende de ambientes)
-        estatisticas['ocupacao'] = importar_ocupacao(
-            xls, periodo_id, mapa_ambientes
-        )
-        st.write(f"✅ Ocupação importada: {estatisticas['ocupacao']}")
+        estatisticas['ocupacao'] = importar_ocupacao(xls, periodo_id, mapa_ambientes)
         
-        # 6.6 Não Regência (depende de instrutores)
-        estatisticas['nao_regencia'] = importar_nao_regencia(
-            xls, periodo_id, mapa_instrutores
-        )
-        st.write(f"✅ Não Regência importada: {estatisticas['nao_regencia']}")
+        estatisticas['nao_regencia'] = importar_nao_regencia(xls, periodo_id, mapa_instrutores)
         
-        # 6.7 Faltas (depende de turmas)
-        estatisticas['faltas'] = importar_faltas(
-            xls, periodo_id, mapa_turmas
-        )
-        st.write(f"✅ Faltas importadas: {estatisticas['faltas']}")
+        estatisticas['faltas'] = importar_faltas(xls, periodo_id, mapa_turmas)
         
         # 7. Limpar caches
         limpar_todos_caches()
@@ -766,7 +653,4 @@ def importar_planilha_completa(arquivo, usuario: str = "admin") -> Tuple[bool, s
         return True, f"✅ Período '{mes_ref}' importado com sucesso!", estatisticas
     
     except Exception as e:
-        import traceback
-        erro_detalhado = traceback.format_exc()
-        st.error(f"Erro detalhado: {erro_detalhado}")
         return False, f"Erro durante importação: {str(e)}", estatisticas

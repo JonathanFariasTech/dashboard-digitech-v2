@@ -182,16 +182,23 @@ st.markdown("""
         font-weight: 600;
     }
     
-    /* ===== FOOTER ===== */
-    .sidebar-footer {
-        position: fixed;
-        bottom: 0;
-        padding: 1rem;
-        font-size: 0.7rem;
-        opacity: 0.5;
+    /* ===== NAV CARDS ===== */
+    .nav-card {
+        padding: 1.5rem;
+        border-radius: 12px;
         text-align: center;
-        width: inherit;
-        background: linear-gradient(0deg, #0f3460 0%, transparent 100%);
+        margin-bottom: 1rem;
+    }
+    
+    .nav-card h3 {
+        margin: 0;
+        font-size: 1.1rem;
+    }
+    
+    .nav-card p {
+        margin: 0.5rem 0 0 0;
+        font-size: 0.85rem;
+        opacity: 0.8;
     }
     
     /* ===== SELECTBOX CUSTOMIZADO ===== */
@@ -235,7 +242,6 @@ st.markdown("""
     /* ===== HIDE STREAMLIT BRANDING ===== */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -321,16 +327,12 @@ with st.sidebar:
     # ===== SEÇÃO: AUTENTICAÇÃO =====
     if not esta_autenticado():
         st.markdown("""
-        <div class="sidebar-section">
-            <div class="sidebar-section-title">🔐 Acesso ao Sistema</div>
-        </div>
+        <div class="sidebar-section-title">🔐 Acesso ao Sistema</div>
         """, unsafe_allow_html=True)
         
         with st.form("login_form", clear_on_submit=True):
             senha = st.text_input("Senha:", type="password", placeholder="Digite sua senha")
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                submitted = st.form_submit_button("🚀 Entrar", use_container_width=True)
+            submitted = st.form_submit_button("🚀 Entrar", use_container_width=True)
             
             if submitted and senha:
                 from src.auth import fazer_login
@@ -344,7 +346,6 @@ with st.sidebar:
         nome_usuario = usuario.get('nome', 'Usuário') if usuario else 'Usuário'
         nivel_usuario = usuario.get('nivel', 'VISUALIZADOR') if usuario else 'VISUALIZADOR'
         
-        # Emoji baseado no nível
         emoji_nivel = "👑" if nivel_usuario == "ADMIN" else ("⭐" if nivel_usuario == "GESTOR" else "👤")
         
         st.markdown(f"""
@@ -393,7 +394,6 @@ with st.sidebar:
             st.session_state['periodo_selecionado'] = periodo_sel
             st.cache_data.clear()
         
-        # Card do período selecionado
         st.markdown(f"""
         <div class="periodo-card">
             <h3>📆 {nome_mes_extenso(periodo_sel)}</h3>
@@ -419,21 +419,12 @@ with st.sidebar:
     
     st.divider()
     
-    # ===== SEÇÃO: NAVEGAÇÃO RÁPIDA =====
+    # ===== SEÇÃO: NAVEGAÇÃO (Menu padrão Streamlit) =====
     st.markdown("""
-    <div class="sidebar-section-title">🧭 Navegação Rápida</div>
+    <div class="sidebar-section-title">🧭 Navegação</div>
     """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.page_link("pages/1_🌐_Visao_360.py", label="🌐 Visão 360", use_container_width=True)
-        st.page_link("pages/3_🏢_Ocupacao.py", label="🏢 Ocupação", use_container_width=True)
-        st.page_link("pages/5_📑_Relatorios.py", label="📑 Relatórios", use_container_width=True)
-    with col2:
-        st.page_link("pages/2_👥_Docentes.py", label="👥 Docentes", use_container_width=True)
-        st.page_link("pages/4_📈_Historico.py", label="📈 Histórico", use_container_width=True)
-        if esta_autenticado():
-            st.page_link("pages/6_⚙️_Admin.py", label="⚙️ Admin", use_container_width=True)
+    st.info("👆 Use o menu acima para navegar entre as páginas")
     
     st.divider()
     
@@ -662,46 +653,83 @@ else:
         
         st.divider()
         
-        # ===== NAVEGAÇÃO =====
+        # ===== CARDS DE NAVEGAÇÃO =====
         st.markdown("### 🧭 Explorar Dados")
+        st.caption("Use o menu lateral para acessar as outras páginas do sistema")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        padding: 1.5rem; border-radius: 12px; text-align: center;">
-                <h3 style="color: white; margin: 0;">🌐 Visão 360º</h3>
-                <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0; font-size: 0.85rem;">
+            <div class="nav-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <h3 style="color: white;">🌐 Visão 360º</h3>
+                <p style="color: rgba(255,255,255,0.8);">
                     Acompanhamento completo de disciplinas e turmas
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.page_link("pages/1_🌐_Visao_360.py", label="Acessar →", use_container_width=True)
         
         with col2:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
-                        padding: 1.5rem; border-radius: 12px; text-align: center;">
-                <h3 style="color: white; margin: 0;">👥 Docentes</h3>
-                <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0; font-size: 0.85rem;">
+            <div class="nav-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <h3 style="color: white;">👥 Docentes</h3>
+                <p style="color: rgba(255,255,255,0.8);">
                     Análise de carga horária e não regência
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.page_link("pages/2_👥_Docentes.py", label="Acessar →", use_container_width=True)
         
         with col3:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
-                        padding: 1.5rem; border-radius: 12px; text-align: center;">
-                <h3 style="color: white; margin: 0;">🏢 Ocupação</h3>
-                <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0; font-size: 0.85rem;">
+            <div class="nav-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <h3 style="color: white;">🏢 Ocupação</h3>
+                <p style="color: rgba(255,255,255,0.8);">
                     Uso e aproveitamento de ambientes
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.page_link("pages/3_🏢_Ocupacao.py", label="Acessar →", use_container_width=True)
+        
+        col4, col5, col6 = st.columns(3)
+        
+        with col4:
+            st.markdown("""
+            <div class="nav-card" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                <h3 style="color: white;">📈 Histórico</h3>
+                <p style="color: rgba(255,255,255,0.8);">
+                    Evolução e tendências temporais
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col5:
+            st.markdown("""
+            <div class="nav-card" style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);">
+                <h3 style="color: #333;">📑 Relatórios</h3>
+                <p style="color: rgba(0,0,0,0.6);">
+                    Exportação de dados e listagens
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col6:
+            if esta_autenticado():
+                st.markdown("""
+                <div class="nav-card" style="background: linear-gradient(135deg, #434343 0%, #000000 100%);">
+                    <h3 style="color: white;">⚙️ Admin</h3>
+                    <p style="color: rgba(255,255,255,0.8);">
+                        Importação e configurações
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class="nav-card" style="background: linear-gradient(135deg, #e0e0e0 0%, #c0c0c0 100%);">
+                    <h3 style="color: #666;">🔒 Admin</h3>
+                    <p style="color: rgba(0,0,0,0.5);">
+                        Requer autenticação
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
     
     else:
         st.error("❌ Erro ao carregar dados do período.")

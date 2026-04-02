@@ -15,6 +15,18 @@ from src.auth import inicializar_sessao
 # CONFIGURAÇÃO
 # ============================================================
 
+def safe_number(value, default=0):
+    """Converte valor para número de forma segura"""
+    if value is None:
+        return default
+    try:
+        import pandas as pd
+        if isinstance(value, (int, float)) and pd.isna(value):
+            return default
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
 st.set_page_config(page_title="Histórico", page_icon="📈", layout="wide")
 
 inicializar_sessao()

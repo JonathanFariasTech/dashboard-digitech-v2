@@ -11,71 +11,49 @@ import os
 
 
 # ============================================================
-# CONEXÃO COM SUPABASE - COM DEBUG
+# CONEXÃO COM SUPABASE - VERSÃO LIMPA (SEM MENSAGENS)
 # ============================================================
 
 @st.cache_resource
 def get_supabase_client() -> Client:
     """
     Cria e retorna cliente Supabase (singleton com cache)
+    Versão silenciosa - sem mensagens na tela
     """
     try:
         # Verificar se secrets existem
-        if not hasattr(st, 'secrets'):
-            st.error("❌ st.secrets não está disponível!")
-            raise Exception("Secrets não configurados")
-        
-        # Verificar chaves específicas
         if "SUPABASE_URL" not in st.secrets:
-            st.error("❌ SUPABASE_URL não encontrado nos secrets!")
-            st.info("👉 Configure em .streamlit/secrets.toml ou nas configurações do Streamlit Cloud")
-            raise KeyError("SUPABASE_URL ausente")
+            raise KeyError("SUPABASE_URL não configurado")
         
         if "SUPABASE_KEY" not in st.secrets:
-            st.error("❌ SUPABASE_KEY não encontrado nos secrets!")
-            raise KeyError("SUPABASE_KEY ausente")
+            raise KeyError("SUPABASE_KEY não configurado")
         
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
         
         # Validar formato básico
         if not url.startswith("https://"):
-            st.error(f"❌ URL inválida: {url}")
             raise ValueError("URL do Supabase deve começar com https://")
-        
-        if len(key) < 20:
-            st.error("❌ API Key parece estar incorreta (muito curta)")
-            raise ValueError("API Key inválida")
         
         # Criar cliente
         client = create_client(url, key)
         
-        # Testar conexão imediatamente
-        try:
-            client.table('parametros').select('chave').limit(1).execute()
-            st.success("✅ Conexão com Supabase estabelecida!")
-        except Exception as e:
-            st.error(f"❌ Falha ao testar conexão: {str(e)}")
-            st.info("Possíveis causas: tabelas não criadas, RLS muito restritivo, ou credenciais erradas")
-            raise
-        
         return client
     
     except Exception as e:
-        st.error(f"🔥 Erro crítico ao conectar Supabase: {str(e)}")
-        st.info("""
-        **Como resolver:**
-        1. Verifique se o arquivo `.streamlit/secrets.toml` existe
-        2. Confirme se SUPABASE_URL e SUPABASE_KEY estão corretos
-        3. Teste as credenciais no painel do Supabase
-        4. Verifique se as tabelas foram criadas no banco
-        """)
+        # Só mostra erro se realmente falhar
+        st.error(f"❌ Erro ao conectar com Supabase: {str(e)}")
         raise
 
 
-def get_db() -> Client:
-    """Alias para obter cliente do banco"""
-    return get_supabase_client()
+def testar_conexao() -> bool:
+    """Testa se a conexão com o Supabase está funcionando"""
+    try:
+        db = get_db()
+        db.table('parametros').select('chave').limit(1).execute()
+        return True
+    except Exception:
+        return False
 
 
 # ============================================================
